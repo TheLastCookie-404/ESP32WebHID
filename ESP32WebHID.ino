@@ -11,6 +11,10 @@ void loop() {}
 
 #define FORMAT_LITTLEFS_IF_FAILED true
 
+#define LED_PIN 48
+#define NUM_PIXELS 1
+
+#include <Adafruit_NeoPixel.h>
 #include <WiFi.h>
 #include <NetworkClient.h>
 #include <WebServer.h>
@@ -18,7 +22,9 @@ void loop() {}
 #include "USB.h"
 #include "USBHIDKeyboard.h"
 #include "LittleFS.h"
+
 USBHIDKeyboard Keyboard;
+Adafruit_NeoPixel pixels(NUM_PIXELS, LED_PIN, NEO_GRB + NEO_KHZ800);
 
 const int buttonPin = 0;         // input pin for pushbutton
 int previousButtonState = HIGH;  // for checking the state of a pushButton
@@ -53,16 +59,24 @@ void handleSave() {
   LittleFS.remove("/wifi.txt");
   File file = LittleFS.open("/wifi.txt", FILE_WRITE);
 
-  if (ssid == "" && password == "") return;
+  if (ssid == "" && password == "") 
+    return server.send(200, "text/plain", "please enter credentials");
   Serial.println(ssid);
   Serial.println(password);
 
-  if (!file) return server.send(500, "text/plain", "cant save credentials!");
+  if (!file) {
+    pixels.setPixelColor(0, pixels.Color(150, 0, 0));
+    pixels.show();
+    return server.send(500, "text/plain", "cant save credentials!");
+  }
   file.println(ssid);
   file.println(password);
 
-  server.send(200, "text/plain", "please enter credentials");
-  ESP.restart();
+  pixels.setPixelColor(0, pixels.Color(0, 150, 0));
+  pixels.show();
+  server.send(200, "text/plain", "credentials entered");
+
+  Serial.println("Reload the device");
 }
 
 void handleEnter() {
@@ -110,11 +124,16 @@ void readFile() {
 void setup(void) {
   pinMode(led, OUTPUT);
   digitalWrite(led, 0);
+  pixels.begin();
   Serial.begin(115200);
   delay(1000);
 
+  pixels.clear();
+  pixels.show();
+
   if (!LittleFS.begin(FORMAT_LITTLEFS_IF_FAILED)) { // Mount the filesystem
     Serial.println("Failed to mount LittleFS");
+    delay(100);
     ESP.restart();
   }
 
@@ -122,25 +141,35 @@ void setup(void) {
 
   readFile();
 
+  Serial.println(ssid);
+  Serial.println(password);
+
   if (ssid == "" || password == "") {
+    pixels.setPixelColor(0, pixels.Color(0, 0, 150));
+    pixels.show();
+
+    Serial.println("AP mode");
     WiFi.mode(WIFI_MODE_AP);
     WiFi.softAP(AP_SSID, AP_PSWD);
     server.on("/save", handleSave);
     server.begin();
   } else {
+    Serial.println("Server mode");
     WiFi.mode(WIFI_STA);
     WiFi.begin(ssid, password);
-    delay(1000);
-    Serial.println("");
 
     // Wait for connection
-    while (WiFi.status()) {
+    while (WiFi.status() != WL_CONNECTED) {
       delay(500);
       Serial.print(".");
 
       connectionTimeCounter++;
 
-      if (connectionTimeCounter > 20) ESP.restart();
+      if (connectionTimeCounter > 70) {
+        LittleFS.remove("/wifi.txt");
+        delay(100);
+        ESP.restart();
+      }
     }
     Serial.println("");
     Serial.print("Connected to ");
@@ -163,6 +192,7 @@ void setup(void) {
     server.on("/disconnect", []() {
       server.send(200, "text/plain", "disconnecting");
       LittleFS.remove("/wifi.txt");
+      delay(100);
       ESP.restart();
     });
 
